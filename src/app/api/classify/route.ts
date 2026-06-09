@@ -2,49 +2,121 @@ import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import type { ClassifyRequest, ClassifyResponse } from '@/types'
 
-// Model i limit tokenów są zablokowane — nie zmieniaj tych stałych.
 const MODEL = 'gpt-4o-mini' as const
 const MAX_TOKENS = 300
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
-// ────────────────────────────────────────────────────────────
-// POST /api/classify
-//
-// Wejście (body JSON):
-//   { message: string, company: string }
-//
-// Wyjście (JSON):
-//   {
-//     category:    "zamówienie" | "pytanie" | "reklamacja" | "spam"
-//     priority:    "high" | "medium" | "low"
-//     draft_reply: string  — gotowy szkic odpowiedzi po polsku
-//     confidence:  number  — 0–1, pewność klasyfikacji
-//   }
-//
-// TODO: Zaimplementuj ten endpoint.
-//
-// Wskazówki:
-//   - Wywołaj openai.chat.completions.create() używając stałych MODEL i MAX_TOKENS
-//   - Poproś model o odpowiedź w formacie JSON (response_format lub system prompt)
-//   - draft_reply powinien być w tonie pasującym do firmy i kategorii
-//   - Zwróć 400 gdy message lub company jest pusty
-// ────────────────────────────────────────────────────────────
+const CATEGORIES = ['zamówienie', 'pytanie', 'reklamacja', 'spam'] as const
+const PRIORITIES = ['high', 'medium', 'low'] as const
 
-export async function POST(req: Request): Promise<NextResponse<ClassifyResponse | { error: string }>> {
-  const body: ClassifyRequest = await req.json()
+const RESPONSE_FORMAT = {
+  type: 'json_schema',
+  json_schema: {
+    name: 'message_classification',
+    strict: true,
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        category: { type: 'string', enum: CATEGORIES },
+        priority: { type: 'string', enum: PRIORITIES },
+        draft_reply: { type: 'string' },
+        confidence: { type: 'number', minimum: 0, maximum: 1 },
+      },
+      required: ['category', 'priority', 'draft_reply', 'confidence'],
+    },
+  },
+} as const
 
-  // TODO: Walidacja wejścia
-  // if (!body.message || !body.company) { ... }
+const buildSystemPrompt = (company: string): string =>
+  [
+    'Jesteś asystentem obsługi klienta, który klasyfikuje przychodzące wiadomości i przygotowuje szkice odpowiedzi.',
+    'Przeanalizuj wiadomość i zwróć wynik zgodny z podanym schematem JSON.',
+    `Pole "category" to jedna z wartości: ${CATEGORIES.join(', ')}.`,
+    `Pole "priority" to jedna z wartości: ${PRIORITIES.join(', ')}.`,
+    'Pole "confidence" to liczba od 0.0 do 1.0 wyrażająca pewność klasyfikacji.',
+    'Pole "draft_reply" musi być napisane w języku polskim.',
+    `Dostosuj ton odpowiedzi "draft_reply" do profilu firmy: ${company}.`,
+  ].join(' ')
 
-  // TODO: Wywołaj OpenAI API używając MODEL i MAX_TOKENS
-  // const completion = await openai.chat.completions.create({
-  //   model: MODEL,
-  //   max_tokens: MAX_TOKENS,
-  //   ...
-  // })
+const isClassifyResponse = (value: unknown): value is ClassifyResponse => {
+  if (typeof value !== 'object' || value === null) return false
+  const candidate = value as Record<string, unknown>
+  return (
+    typeof candidate.category === 'string' &&
+    (CATEGORIES as readonly string[]).includes(candidate.category) &&
+    typeof candidate.priority === 'string' &&
+    (PRIORITIES as readonly string[]).includes(candidate.priority) &&
+    typeof candidate.draft_reply === 'string' &&
+    typeof candidate.confidence === 'number' &&
+    candidate.confidence >= 0 &&
+    candidate.confidence <= 1
+  )
+}
 
-  // TODO: Sparsuj odpowiedź i zwróć ClassifyResponse
+/**
+ * Handles `POST /api/classify`.
+ *
+ * Classifies an inbound customer message and produces a ready-to-send draft
+ * reply using the OpenAI `gpt-4o-mini` model. Structured Outputs
+ * (`response_format: { type: 'json_schema', ... }`) guarantees that the model
+ * returns a payload matching the {@link ClassifyResponse} contract. The system
+ * prompt instructs the model to write `draft_reply` in Polish, adapting its
+ * tone to the supplied company profile.
+ *
+ * @param req - Incoming request whose JSON body must satisfy {@link ClassifyRequest}.
+ * @returns A JSON response:
+ *  - `200` with a {@link ClassifyResponse} payload on success.
+ *  - `400` when `message` or `company` is missing or empty.
+ *  - `500` when the OpenAI request fails or returns an invalid payload.
+ */
+export async function POST(
+  req: Request,
+): Promise<NextResponse<ClassifyResponse | { error: string }>> {
+  let body: ClassifyRequest
 
-  return NextResponse.json({ error: 'Not implemented' }, { status: 501 })
+  try {
+    body = (await req.json()) as ClassifyRequest
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const message = body?.message?.trim()
+  const company = body?.company?.trim()
+
+  if (!message || !company) {
+    return NextResponse.json(
+      { error: 'Both "message" and "company" are required and must be non-empty.' },
+      { status: 400 },
+    )
+  }
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      response_format: RESPONSE_FORMAT,
+      messages: [
+        { role: 'system', content: buildSystemPrompt(company) },
+        { role: 'user', content: message },
+      ],
+    })
+
+    const content = completion.choices[0]?.message?.content
+
+    if (!content) {
+      return NextResponse.json({ error: 'Empty response from model.' }, { status: 500 })
+    }
+
+    const parsed: unknown = JSON.parse(content)
+
+    if (!isClassifyResponse(parsed)) {
+      return NextResponse.json({ error: 'Malformed response from model.' }, { status: 500 })
+    }
+
+    return NextResponse.json(parsed, { status: 200 })
+  } catch {
+    return NextResponse.json({ error: 'Failed to classify the message.' }, { status: 500 })
+  }
 }

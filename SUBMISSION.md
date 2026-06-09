@@ -1,0 +1,22 @@
+## Krok 3 — co zrobiłem/am i dlaczego
+Zaimplementowałem dynamiczny panel statystyk wykorzystujący `useMemo`, aby zademonstrować umiejętność optymalizacji renderowania w React — liczniki przeliczają się wyłącznie przy zmianie tablicy `items`. Panel poprawia UX, dostarczając operatorowi natychmiastowy feedback o liczbie wiadomości oczekujących, zatwierdzonych i odrzuconych. Dzięki temu osoba weryfikująca od razu widzi postęp swojej pracy bez przeglądania całej listy.
+
+## AI — jak używałem/am narzędzi
+- **Narzędzia:** Cursor (model Opus 4.8 w funkcji Composer)
+- **Prompt który zadziałał najlepiej:** 
+  `Implement an endpoint in the file src/app/api/classify/route.ts for a Next.js 15 (App Router) application.
+  The endpoint should accept POST requests with a JSON body of the structure: { "message": "string", "company": "string" }.
+  Requirements:
+  Use the official openai SDK and the gpt-4o-mini model.
+  If message or company are empty, return a response with status code 400.
+  Use the Structured Outputs mechanism (response_format: { type: "json_schema", ... }) or enforce JSON mode to guarantee a correct response structure from the API.
+  The response from the endpoint must conform to the types defined in src/types/index.ts (do not import them if it causes conflicts, but adhere to the structure):
+  { "category": "zamówienie" | "pytanie" | "reklamacja" | "spam", "priority": "high" | "medium" | "low", "draft_reply": "string", "confidence": number }
+  The system prompt for OpenAI must instruct the model to generate draft_reply in Polish, matching the tone to the company profile passed in the company parameter.
+  Add a try/catch block to handle OpenAI API errors and return a 500 error on failure.
+  Include complete JSDoc documentation for the route handler. Do not write any inline code comments. Keep the code extremely clean and strictly typed.`
+- **Gdzie AI się pomylił/a i co poprawiłem/am ręcznie:** 
+  1. AI (Cursor) nie potrafiło poprawnie odczytać statusu wyjścia z terminala przy próbie uruchomienia skryptów weryfikujących typy. Musiałem ręcznie uruchomić `npx tsc --noEmit`, aby potwierdzić brak błędów. 
+  2. Model miał tendencję do podejmowania samodzielnych decyzji deweloperskich. W Kroku 1 z własnej inicjatywy dodał runtime type-guard, co było dobrym posunięciem, ale wymagało mojej weryfikacji. 
+  3. Podczas implementacji Kroku 2, AI z własnej inicjatywy wprowadziło bezpieczny przepływ edycji (wymuszający jawne kliknięcie "Zapisz" lub "Anuluj" przed możliwością akceptacji), co mocno poprawia UX. Zaakceptowałem to rozwiązanie, weryfikując uprzednio poprawność renderowania warunkowego.
+- **Szacowany udział AI w kodzie:** 80% kodu wygenerowane przez AI, 20% to moje planowanie architektury, narzucanie restrykcji (np. dokumentacja JSDoc) i weryfikacja.
